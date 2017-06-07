@@ -1,5 +1,13 @@
-trigger TerritoryTrigger on Territory__c (before insert) {
+trigger TerritoryTrigger on Territory__c (before insert, before delete) {
 
-    TriggerTerritoryHandler.checkUnicness(Trigger.new);
+    if (Trigger.isBefore) {
+        if (Trigger.isInsert) {
+            TriggerTerritoryHandler.checkUnicness(Trigger.new);
+        } else {
+            if (Trigger.isDelete) {
+                TriggerTerritoryHandler.relinkTerritoriesAndTerrUsersWhenDelete(Trigger.oldMap);
+            }
+        }
+    }
 
 }

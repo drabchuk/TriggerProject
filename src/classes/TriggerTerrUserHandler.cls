@@ -3,7 +3,6 @@ public with sharing class TriggerTerrUserHandler {
     public static void shareAccountsAndContacts(List<Terr_Urer__c> allTerrUrers) {
 
         Map<Id, List<Terr_Urer__c>> userTerrMap = groupByUser(allTerrUrers);
-
         Set<Id> usersIds = userTerrMap.keySet();
 
         System.debug('user id :' + usersIds);
@@ -21,33 +20,24 @@ public with sharing class TriggerTerrUserHandler {
             Set<Id> terrIdsToDelete = new Set<Id>();
 
             Set<Id> currentLayerIds = insertedTerrIds.clone();
-            while (true) {
-                List<Territory__c> layer =
-                [
-                        SELECT Id, Parent_Territory__c, Name
-                        FROM Territory__c
-                        WHERE Parent_Territory__c IN :currentLayerIds
-                ];
+            List<Territory__c> layer;
+
+            do  {
+
+                layer = selectTerritoriesByParent(currentLayerIds);
                 System.debug('terr layer : ' + layer);
-                if (layer == null || layer.isEmpty()) {
-                    break;
-                }
                 Set<Id> layerTerrIds = retrieveTerritoriesIds(layer);
                 terrIdsToDelete.addAll(layerTerrIds);
                 visibleTerrs.addAll(layerTerrIds);
                 currentLayerIds = layerTerrIds;
-            }
+
+            } while ((layer != null && !layer.isEmpty()));
 
             System.debug('after bfs');
             System.debug('visible territories : ' + visibleTerrs);
             System.debug('to delete : ' + terrIdsToDelete);
 
-            List<Terr_Urer__c> terrUrersToDelete =
-            [
-                    SELECT Id
-                    FROM Terr_Urer__c
-                    WHERE Territory__c IN :terrIdsToDelete
-            ];
+            List<Terr_Urer__c> terrUrersToDelete = selectTerrUrers(terrIdsToDelete);
 
             System.debug('ter users to delete : ' + terrUrersToDelete);
 
@@ -63,7 +53,49 @@ public with sharing class TriggerTerrUserHandler {
 
     }
 
-    public static void shareOnAccounts(List<Account> accounts, Id userId) {
+    public static void deleteSharing(List<Terr_Urer__c> allTerrUrers) {
+        System.debug('all terrs to delete ' + allTerrUrers);
+
+        Map<Id, List<Terr_Urer__c>> userTerrMap = groupByUser(allTerrUrers);
+
+        Set<Id> usersIds = userTerrMap.keySet();
+
+        System.debug('user id :' + usersIds);
+
+        for (Id userId : usersIds) {
+            List<Terr_Urer__c> terrUrers = userTerrMap.get(userId);
+
+            Set<Id> insertedTerrIds = retrieveTerritoriesIds(terrUrers);
+
+            System.debug('terr ids: ' + insertedTerrIds);
+
+            Set<Id> terrIdsToDelete = new Set<Id>();
+            terrIdsToDelete.addAll(insertedTerrIds);
+
+            Set<Id> currentLayerIds = insertedTerrIds.clone();
+            List<Territory__c> layer;
+            do {
+
+                layer = selectTerritoriesByParent(currentLayerIds);
+                System.debug('terr layer : ' + layer);
+                Set<Id> layerTerrIds = retrieveTerritoriesIds(layer);
+                terrIdsToDelete.addAll(layerTerrIds);
+                currentLayerIds = layerTerrIds;
+
+            } while (layer != null && !layer.isEmpty());
+
+            System.debug('after bfs');
+
+            List<Account> accounts = selectAccountByTerritory(terrIdsToDelete);
+
+            System.debug('accounts to unshare : ' + accounts);
+
+            unshareOnAccounts(accounts, userId);
+
+        }
+    }
+
+    private static void shareOnAccounts(List<Account> accounts, Id userId) {
 
         List<AccountShare> accountShares = new List<AccountShare>();
         List<ContactShare> contactShares = new List<ContactShare>();
@@ -97,7 +129,7 @@ public with sharing class TriggerTerrUserHandler {
 
     }
 
-    public static void unshareOnAccounts(List<Account> accounts, Id userId) {
+    private static void unshareOnAccounts(List<Account> accounts, Id userId) {
 
         List<AccountShare> accountShares;
         List<ContactShare> contactShares;
@@ -127,23 +159,6 @@ public with sharing class TriggerTerrUserHandler {
 
         delete accountShares;
         delete contactShares;
-
-    }
-
-    public static List<Account> selectAccountByTerritory(Set<Id> terrIds) {
-
-        return
-        [
-                SELECT
-                        Account.Id, Account.Name,
-                        (SELECT
-                                Reference__c.Id,
-                                Reference__c.Contact__r.Id,
-                                Reference__c.Contact__r.Name
-                        FROM Account.Contacts__r)
-                FROM Account
-                WHERE Territory__c IN :terrIds
-        ];
 
     }
 
@@ -181,51 +196,55 @@ public with sharing class TriggerTerrUserHandler {
 
     }
 
-    public static void deleteSharing(List<Terr_Urer__c> allTerrUrers) {
-        System.debug('all terrs to delete ' + allTerrUrers);
+    private static List<Account> selectAccountByTerritory(Set<Id> terrIds) {
 
-        Map<Id, List<Terr_Urer__c>> userTerrMap = groupByUser(allTerrUrers);
+        return
+        [
+                SELECT
+                        Account.Id, Account.Name,
+                (SELECT
+                        Reference__c.Id,
+                        Reference__c.Contact__r.Id,
+                        Reference__c.Contact__r.Name
+                FROM Account.Contacts__r)
+                FROM Account
+                WHERE Territory__c IN :terrIds
+        ];
 
-        Set<Id> usersIds = userTerrMap.keySet();
+    }
 
-        System.debug('user id :' + usersIds);
+    private static List<Territory__c> selectTerritoriesByParent(Set<Id> ids) {
+        return
+        [
+                SELECT Id, Name, Parent_Territory__c
+                FROM Territory__c
+                WHERE Parent_Territory__c IN :ids
+        ];
+    }
 
-        for (Id userId : usersIds) {
-            List<Terr_Urer__c> terrUrers = userTerrMap.get(userId);
+    private static List<Terr_Urer__c> selectTerrUrers(Set<Id> ids) {
+        return
+        [
+                SELECT Id
+                FROM Terr_Urer__c
+                WHERE Territory__c IN :ids
+        ];
+    }
 
-            Set<Id> insertedTerrIds = retrieveTerritoriesIds(terrUrers);
+    private static List<Territory__c> selectSubTree(Set<Id> ids) {
 
-            System.debug('terr ids: ' + insertedTerrIds);
+        List<Territory__c> layer;
+        do  {
 
-            Set<Id> terrIdsToDelete = new Set<Id>();
-            terrIdsToDelete.addAll(insertedTerrIds);
+            layer = selectTerritoriesByParent(currentLayerIds);
+            System.debug('terr layer : ' + layer);
+            Set<Id> layerTerrIds = retrieveTerritoriesIds(layer);
+            terrIdsToDelete.addAll(layerTerrIds);
+            visibleTerrs.addAll(layerTerrIds);
+            currentLayerIds = layerTerrIds;
 
-            Set<Id> currentLayerIds = insertedTerrIds.clone();
-            while (true) {
-                List<Territory__c> layer =
-                [
-                        SELECT Id, Parent_Territory__c, Name
-                        FROM Territory__c
-                        WHERE Parent_Territory__c IN :currentLayerIds
-                ];
-                System.debug('terr layer : ' + layer);
-                if (layer == null || layer.isEmpty()) {
-                    break;
-                }
-                Set<Id> layerTerrIds = retrieveTerritoriesIds(layer);
-                terrIdsToDelete.addAll(layerTerrIds);
-                currentLayerIds = layerTerrIds;
-            }
+        } while ((layer != null && !layer.isEmpty()));
 
-            System.debug('after bfs');
-
-            List<Account> accounts = selectAccountByTerritory(terrIdsToDelete);
-
-            System.debug('accounts to unshare : ' + accounts);
-
-            unshareOnAccounts(accounts, userId);
-
-        }
     }
 
 }
